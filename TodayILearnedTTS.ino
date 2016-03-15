@@ -9,10 +9,10 @@
 #define txPin   GPIO2  // Serial output (connects to Emic 2's SIN pin)
 
 
-const char* ssid     = "twiot";
-const char* password = "tworker01";
+const char* ssid     = "SSID";
+const char* password = "password";
 
-const char* mqtt_server = "atliot.com";
+const char* mqtt_server = "mqtt_server";
 
 char message_buff[256];
 
