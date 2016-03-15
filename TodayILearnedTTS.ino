@@ -1,20 +1,22 @@
-#include <ESP8266WiFi.h>;
+#include <ESP8266WiFi.h>
 #include <SoftwareSerial.h>
 #include <PubSubClient.h>
 #include "Emic2TtsModule.h"
+
+
 
 #define rxPin   D9  // Serial input (connects to Emic 2's SOUT pin)
 #define txPin   GPIO2  // Serial output (connects to Emic 2's SIN pin)
 
 
-const char* ssid     = "ssid";
-const char* password = "password";
+const char* ssid     = "twiot";
+const char* password = "tworker01";
 
-const char* mqtt_server = "mqtt_server";
+const char* mqtt_server = "atliot.com";
 
+char message_buff[256];
 
-
-String tts;
+String TIL[9];
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -44,67 +46,87 @@ void setup_wifi() {
   Serial.println(WiFi.localIP());
 }
 
-String get_tts() {
-  String tts_string;
+// Add TIL message to the String array  
+void addTILMessage( byte *message, int msgLength) {
+  static int addTILIndex = 0;
+  char msg_buff[257];
   
-  Serial.println("\nLet's browse Reddit!");
+  for (int l=0; l<msgLength; l++)
+    msg_buff[l] = message[l];
 
-  Serial.print("connecting to ");
-  Serial.println(host);
-  
-  // Use WiFiClient class to create TCP connections
-  WiFiClient client;
-  const int httpPort = 80;
-  if (!client.connect(host, httpPort)) {
-    Serial.println("connection failed");
-    exit ;
-  }
-  
-  // We now create a URI for the request
-  String url = "/helloworld/index.html";
-  Serial.print("Requesting URL: ");
-  Serial.println(url);
-  
-  // This will send the request to the server
-  client.print(String("GET ") + url + " HTTP/1.1\r\n" +
-               "Host: " + host + "\r\n" + 
-               "Connection: close\r\n\r\n");
-  delay(500);
-  
-  // Read all the lines of the reply from server and print them to Serial
-  while(client.available()){
-    String line = client.readStringUntil('\r');
-    if (line.indexOf("Content-Type:") != -1) {
-         tts_string = client.readString();
-         // Remove leading /n
-         tts_string.remove(0, 3);
-    }
-  }
-  Serial.println();
-  Serial.println(tts_string);
-  Serial.println("closing connection"); 
+  msg_buff[msgLength] = '\0' ;
 
-  return tts_string;  
+  TIL[addTILIndex] = String(msg_buff);
+  TIL[addTILIndex].replace("TIL", "Did you know");
+  TIL[addTILIndex].replace("Til", "Did you know");
+  
+  //Serial.println("Message arrived: ");
+  //Serial.println(TIL[addTILIndex]);
+  //Serial.println("at location ");
+  //Serial.println(addTILIndex);
+  
+  addTILIndex++;
+  if (addTILIndex == 9)
+    addTILIndex = 0;
+}
+
+void addMotionMessage( byte *message, int msgLength) {
+  char msg_buff[257];
+  
+  for (int l=0; l<msgLength; l++)
+    msg_buff[l] = message[l];
+
+  msg_buff[msgLength] = '\0' ;
+
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
+  
+  static int TILIndex = 0;
+  static int TTSIndex = 0;
 
-  // Send text to Serial1 if movement is detected in the Kitchen
-  if ((char)payload[33] == 'M') {
-    //digitalWrite(BUILTIN_LED, LOW);   // Turn the LED on (Note that LOW is the voltage level
-    Serial1.print('S');
-    delay(500);
-    Serial1.print(tts);
-    Serial.println(tts);
-    // delay(5000);
-    } 
+  int i = 0;
+  
+  // create character buffer with ending null terminator (string)
+  for(i=0; i<length; i++) {
+    message_buff[i] = payload[i];
+  }
+  message_buff[i] = '\0';
+  
+  String msgString = String(message_buff);
+
+  // Print new MQTT messages
+  Serial.println("Message arrived:  topic:" + String(topic) + " Payload: " + msgString);
+
+  // Detect motion event from Kitchen and send TIL string to the Emic 2 TTS card (Serial1)
+  if (msgString.indexOf("Kitchen") != -1) {
+         Serial1.print("S");
+         Serial1.print(TIL[TTSIndex]);
+         Serial1.print('\n');
+         Serial.println();
+         Serial.println("Kitchen motion detected. Sending the following to TTS:");
+         Serial.println(TIL[TTSIndex]);
+         Serial.println();
+         delay(1000);
+         TTSIndex++;
+         if (TTSIndex == 9)
+          TTSIndex = 0;
+   }
+
+  // Determine if MQTT Topic is /TIL
+  if (strcmp(topic,"/TIL") == 0 ) {
+    addTILMessage(payload, length);
+  }
+  else 
+  // Determine if MQTT Topic is /motion
+  if (strcmp(topic,"/motion") == 0 ) {
+    addMotionMessage(payload, length);
+  }
+  else
+  {
+    Serial.println("unknown Topic");
+  }
+  
 }
 
 void reconnect() {
@@ -116,6 +138,7 @@ void reconnect() {
       Serial.println("connected");
       // ... and resubscribe
       client.subscribe("/motion");
+      client.subscribe("/TIL");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -132,20 +155,22 @@ void setup() {
   Serial.begin(115200);
   // Serial1 to Emic 2
   Serial1.begin(9600);
-  delay(3000);
+  delay(5000);
+  Serial1.print('\n');
+  delay(100);
   Serial1.print('V');
   Serial1.print(18);
   Serial1.print('\n');
+  delay(100);
   Serial1.print('N');
   Serial1.print(1);
   Serial1.print('\n');
+  delay(100);
 
   // Connect to wifi
   setup_wifi();
 
-  // Get Text to Speech string from web
-  tts = get_tts();
-  Serial.println(tts);
+  
   // Connect to MQTT Server and subscribe to topic
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
@@ -160,12 +185,13 @@ void loop() {
   }
   client.loop();
 
-  // Subsrcribe to the motion topic on the MQTT Broker
-  long now = millis();
+  // Subsrcribe to the motion & TIL topics on the MQTT Broker
+ long now = millis();
   if (now - lastMsg > 2000) {
     lastMsg = now;
     ++value;
     client.subscribe("/motion");
-  }
-
+    client.subscribe("/TIL");
+  } 
+  
 }
